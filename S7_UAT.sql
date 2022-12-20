@@ -1152,7 +1152,7 @@ FROM    CLIP_FINAL   a
     select *
    -- count(*), avg(test_clip_amount)
     from test
-    where statement_number = 7
+    where statement_number in (7,8)
    -- and test_clip_amount > 100  
   // where decision_data:"revolving_debt_velocity_passed" = 'false'
 ; 
