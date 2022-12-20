@@ -1110,7 +1110,8 @@ WHEN pass_eligibility = 1 and account_review_hardcuts = 0 then 100
   ELSE 100 END AS D_series_CLIP_AMOUNT_no_max
    
     , case when MAX_Y1_CLIP_AMOUNT < D_series_CLIP_AMOUNT_no_max then MAX_Y1_CLIP_AMOUNT  ---ensure no CLIP results in line going above Y1 max line
-            when D_series_CLIP_AMOUNT_no_max > 0 and (potential_credit_lines_max - pre_clip_line_limit) < D_series_CLIP_AMOUNT_no_max then potential_credit_lines_max - pre_clip_line_limit      ---ensure no CLIP is higher than the max CLIP according to ATP
+           -- when D_series_CLIP_AMOUNT_no_max > 0 and (potential_credit_lines_max - pre_clip_line_limit) < D_series_CLIP_AMOUNT_no_max then potential_credit_lines_max - pre_clip_line_limit      ---ensure no CLIP is higher than the max CLIP according to ATP
+    when D_series_CLIP_AMOUNT_no_max > 0 and (potential_credit_lines_max - pre_clip_line_limit) < D_series_CLIP_AMOUNT_no_max then 100
 	    else D_series_CLIP_AMOUNT_no_max end as D_series_CLIP_AMOUNT -- using smaller of max potential CLIP and BAU CLIP amount to make sure we don't go over the max Y1 line amount ($5k)
 
 FROM    CL_THRESHOLD A
@@ -1153,7 +1154,10 @@ FROM    CLIP_FINAL   a
    -- count(*), avg(test_clip_amount)
     from test
     where statement_number in (7,8)
+   -- and riskgroup_dseries_y1 = 3
+   -- and util = '5: 50-80%'
+   -- and pcl = 3000
    -- and test_clip_amount > 100  
-  // where decision_data:"revolving_debt_velocity_passed" = 'false'
+  -- where decision_data:"revolving_debt_velocity_passed" = 'false'
 ; 
 
