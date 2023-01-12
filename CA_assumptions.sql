@@ -1,0 +1,250 @@
+--------------------------- Retro -----------------------------
+DROP table if exists covid_util_adj;
+Create temp table covid_util_adj
+( MONTH DATE,
+pbad DECIMAL(5,3),
+DQ30 DECIMAL(5,3),
+DQ30_plus_usd DECIMAL(5,3),
+util DECIMAL(5,3));
+INSERT INTO covid_util_adj
+(MONTH, pbad, DQ30, DQ30_plus_usd, util)
+VALUES
+('01/01/2020', 1, 1, 1, 1),
+('02/01/2020', 1, 1, 1, 1),
+('03/01/2020', 1, 1, 1, 0.98),
+('04/01/2020', 1, 0.896, 0.918, 0.96),
+('05/01/2020', 0.993, 0.813, 0.852, 0.92),
+('06/01/2020', 0.938, 0.684, 0.773, 0.89),
+('07/01/2020', 0.856, 0.578, 0.689, 0.86),
+('08/01/2020', 0.84, 0.516, 0.611, 0.84),
+('09/01/2020', 0.78, 0.495, 0.546, 0.82),
+('10/01/2020', 0.725, 0.5, 0.494, 0.8),
+('11/01/2020', 0.637, 0.507, 0.463, 0.81),
+('12/01/2020', 0.567, 0.551, 0.455, 0.82),
+('01/01/2021', 0.517, 0.656, 0.473, 0.83),
+('02/01/2021', 0.49, 0.669, 0.494, 0.82),
+('03/01/2021', 0.51, 0.622, 0.502, 0.79),
+('04/01/2021', 0.525, 0.453, 0.479, 0.76),
+('05/01/2021', 0.571, 0.37, 0.442, 0.73),
+('06/01/2021', 0.62, 0.353, 0.395, 0.72),
+('07/01/2021', 0.602, 0.383, 0.358, 0.72),
+('08/01/2021', 0.545, 0.41, 0.332, 0.73),
+('09/01/2021', 0.431, 0.429, 0.334, 0.72),
+('10/01/2021', 0.384, 0.493, 0.374, 0.71),
+('11/01/2021', 0.347, 0.558, 0.432, 0.7),
+('12/01/2021', 0.348, 0.562, 0.482, 0.7),
+('01/01/2022', 0.338, 0.525, 0.5, 0.71),
+('02/01/2022', 0.36, 0.491, 0.509, 0.7),
+('03/01/2022', 0.387, 0.499, 0.517, 0.69),
+('04/01/2022', 0.433, 0.47, 0.517, 0.68),
+('05/01/2022', 0.437, 0.462, 0.508, 0.67),
+('06/01/2022', 0.429, 0.476, 0.504, 0.64)
+;
+DROP table if exists eligibility_flags;
+Create temp table eligibility_flags as (
+SELECT
+sum(AVG_OUTSTANDING_BALANCE_STMT_USD)
+over (Partition by ACCOUNT_ID
+order by STATEMENT_NUM ASC
+rows between 2 preceding and 0 following) as rolling_os_3
+,sum(CASE WHEN to_char(a.STATEMENT_END_DT,'YYYY-MM') = to_char(D.MONTH,'YYYY-MM') THEN AVG_OUTSTANDING_BALANCE_STMT_USD/D.util ELSE AVG_OUTSTANDING_BALANCE_STMT_USD END)
+over (Partition by ACCOUNT_ID
+order by STATEMENT_NUM ASC
+rows between 2 preceding and 0 following) as rolling_os_3_COVID
+,min(CREDIT_LIMIT_STMT_USD)
+over (Partition by ACCOUNT_ID
+order by STATEMENT_NUM ASC
+rows  1 preceding) as last_cl
+,sum(CREDIT_LIMIT_STMT_USD)
+over (Partition by ACCOUNT_ID
+order by STATEMENT_NUM ASC
+rows between 2 preceding and 0 following) as rolling_cl_3
+,max(STATEMENT_DELINQUENCY_BUCKET_NUM)
+over (Partition by ACCOUNT_ID
+order by STATEMENT_NUM ASC
+rows between 5 preceding and 0 following) as rolling_dq_6
+,max(STATEMENT_DELINQUENCY_BUCKET_NUM)
+over (Partition by ACCOUNT_ID
+order by STATEMENT_NUM ASC
+rows between 11 preceding and 0 following) as rolling_dq_12
+,(FEE_OTHER_BALANCE_STMT_USD+PRINCIPAL_BALANCE_STMT_USD)/CREDIT_LIMIT_STMT_USD AS CURRENTLY_OVERLIMIT
+,CASE
+WHEN CURRENTLY_OVERLIMIT >= 1 THEN 1
+WHEN CURRENTLY_OVERLIMIT < 1 THEN 0
+ELSE null
+END AS hardcut__CURRENTLY_OVERLIMIT
+,rolling_os_3 / rolling_cl_3 AS rolling_util_3
+,rolling_os_3_COVID / rolling_cl_3 AS rolling_util_3_COVID
+,CASE
+WHEN rolling_util_3 <= .0 THEN 'A.<= 0%'
+WHEN rolling_util_3 < .1 THEN 'B.< 10%'
+WHEN rolling_util_3 < .3 THEN 'C.10%-30%'
+WHEN rolling_util_3 < .5 THEN 'D.30%-50%'
+WHEN rolling_util_3 < .8 THEN 'E.50%-80%'
+WHEN rolling_util_3 >= .8 THEN 'F.>80%'
+ELSE NULL
+END AS UTILBAND_CSERIES_DEFS
+,CASE
+WHEN rolling_util_3_COVID <= .0 THEN 'A.<= 0%'
+WHEN rolling_util_3_COVID < .1 THEN 'B.< 10%'
+WHEN rolling_util_3_COVID < .3 THEN 'C.10%-30%'
+WHEN rolling_util_3_COVID < .5 THEN 'D.30%-50%'
+WHEN rolling_util_3_COVID < .8 THEN 'E.50%-80%'
+WHEN rolling_util_3_COVID >= .8 THEN 'F.>80%'
+ELSE NULL
+END AS UTILBAND_CSERIES_DEFS_COVID
+,CASE
+WHEN rolling_dq_6 = 0 THEN 0
+WHEN rolling_dq_6 > 0 THEN 1
+ELSE NULL
+END AS hardcut__DQ_LAST_6_STATEMENTS
+,CASE
+WHEN rolling_dq_12 = 0 THEN 0
+WHEN rolling_dq_12 > 0 THEN 1
+ELSE NULL
+END AS hardcut__DQ_LAST_12_STATEMENTS
+,CASE
+WHEN  SOR = 'FIS'
+AND BLOCK_CD = '#' THEN 0
+WHEN  SOR = 'TSYS'
+AND BLOCK_CD is null THEN 0
+ELSE 1
+END AS hardcut__BANKRUPT_DECEASED_FRAUD
+,*
+FROM
+ACCOUNT_STATEMENTS a
+LEFT JOIN
+covid_util_adj D
+ON to_char(a.STATEMENT_END_DT,'YYYY-MM') = to_char(D.MONTH,'YYYY-MM')
+WHERE
+CREDIT_LIMIT_STMT_USD <> 0
+);
+DROP TABLE IF EXISTS analysis_table;
+CREATE TEMP TABLE analysis_table AS (
+SELECT
+e.account_id
+,e.STATEMENT_NUM
+,ACCOUNT_OPEN_CNT
+,STATEMENT_END_DT
+,to_char(STATEMENT_END_DT,'YYYY-MM') AS STATEMENT_END_DT_Y_M
+,hardcut__BANKRUPT_DECEASED_FRAUD
+,hardcut__CURRENTLY_OVERLIMIT
+,hardcut__DQ_LAST_6_STATEMENTS
+,UTILBAND_CSERIES_DEFS
+,UTILBAND_CSERIES_DEFS_COVID
+,SCORES__CLIP_MODEL_D1_20220728_SCORE_RISK_GROUP AS RISKGROUP_DSERIES_Y1
+,SCORES__CLIP_MODEL_D2_20220728_SCORE_RISK_GROUP AS RISKGROUP_DSERIES_Y2
+,CASE
+WHEN hardcut__BANKRUPT_DECEASED_FRAUD = 0
+AND hardcut__CURRENTLY_OVERLIMIT = 0
+AND hardcut__DQ_LAST_12_STATEMENTS = 0
+THEN 1
+ELSE 0
+END AS eligibility_HC_Y1
+,CASE
+WHEN hardcut__BANKRUPT_DECEASED_FRAUD = 0
+AND hardcut__CURRENTLY_OVERLIMIT = 0
+AND hardcut__DQ_LAST_6_STATEMENTS = 0
+THEN 1
+ELSE 0
+END AS eligibility_HC_Y2
+,CASE WHEN last_cl <= 1000 THEN 1000
+WHEN last_cl <= 2000 THEN 2000
+WHEN last_cl <= 3000 THEN 3000
+WHEN last_cl <= 4000 THEN 4000
+WHEN last_cl <= 5000 THEN 5000
+WHEN last_cl <= 6000 THEN 6000
+WHEN last_cl <= 7000 THEN 7000
+WHEN last_cl <= 8000 THEN 8000
+ELSE NULL END last_cl
+FROM
+--DS_DB.LINE_MGMT.RETROSCORES_D_SERIES_MODEL_BUILD_v2 AS A
+--LEFT JOIN
+DATAMART_DB.DM_LINE_MGMT.MART_SCORES_D1_SERIES__VIEW AS A
+INNER JOIN
+  DATAMART_DB.DM_LINE_MGMT.MART_SCORES_D2_SERIES__VIEW AS B
+  ON A.external_account_id = B.external_account_id
+  AND A.MART_DATE = B.MART_DATE
+INNER JOIN
+  eligibility_flags AS E
+  ON A.external_account_id = E.external_account_id
+  AND A.MART_DATE = E.STATEMENT_END_DT
+);
+SELECT
+A.STATEMENT_NUM AS STATEMENT_NUM_CLIP
+, case when statement_num_clip = 7 then 'Y1'
+when statement_num_clip = 18 then 'Y2'
+when statement_num_clip = 26 then 'Y3'
+else 'N/A' end as year
+,B.STATEMENT_NUM - A.STATEMENT_NUM MONTH_SINCE_CLIP
+,TO_CHAR(account_open_dt,'YYYY') AS account_open_Y
+//,TO_CHAR(account_open_dt,'YYYY-MM') AS account_open_Y_M
+--,TO_CHAR(EVALUATED_TIMESTAMP,'YYYY') AS EVALUATED_CLIP_Y
+--,TO_CHAR(EVALUATED_TIMESTAMP,'YYYY-MM') AS EVALUATED_CLIP_Y_M
+,CASE
+  WHEN A.STATEMENT_NUM in (7)
+  THEN RISKGROUP_DSERIES_Y1
+  WHEN A.STATEMENT_NUM IN (18,26)
+  THEN RISKGROUP_DSERIES_Y2
+ELSE NULL
+END AS RISKGROUP_DSERIES
+--,RISKGROUP_DSERIES_Y2
+//,UTILBAND_CSERIES_DEFS
+--,UTILBAND_CSERIES_DEFS_COVID
+,CASE
+  WHEN A.STATEMENT_NUM in (7)
+  THEN eligibility_HC_Y1
+  WHEN A.STATEMENT_NUM IN (18,26)
+  THEN eligibility_HC_Y2
+ELSE NULL
+END AS eligibility_HC
+--,account_charge_off_in_stmt_cnt
+,sum(B.ACCOUNT_OPEN_CNT) as open_accts
+-- ,sum(AVG_OUTSTANDING_BALANCE_STMT_USD) AS AVG_OUTSTANDING_BALANCE_STMT_USD_SUM
+-- ,SUM(CREDIT_LIMIT_STMT_USD) AS CREDIT_LIMIT_STMT_USD_USD
+-- ,SUM(DELINQUENCY_D030_STMT_CNT) AS DQ30_CNT_SUM
+,sum(case when cash_advance_balance_stmt_usd > 0 then 1 else 0 end) cash_adv_cnt
+,SUM(account_charge_off_in_stmt_cnt) co_in_stmt
+,SUM(CASE WHEN D.MONTH IS NOT NULL THEN account_charge_off_in_stmt_cnt/pbad ELSE account_charge_off_in_stmt_cnt END) co_in_stmt_COVID
+,SUM(b.ACCOUNT_OPEN_CNT) AS ACCOUNT_OPEN_CNT_SUM
+,SUM(CHARGE_OFF_BALANCE_USD) AS CHARGE_OFF_BALANCE_USD_IN_STMT_SUM
+,SUM(CREDIT_LIMIT_STMT_USD) AS CREDIT_LIMIT_STMT_USD_SUM
+,SUM(AVG_OUTSTANDING_BALANCE_STMT_USD) AS AVG_OUTSTANDING_BALANCE_STMT_USD_SUM
+,SUM(AVG_DAILY_PURCHASE_BALANCE_STMT_USD) AS AVG_DAILY_PURCHASE_BALANCE_STMT_USD_SUM
+,SUM(PURCHASE_BALANCE_STMT_USD) AS PURCHASE_BALANCE_STMT_USD_SUM
+,SUM(ACCOUNT_CLOSED_IN_STMT_CNT) AS ACCOUNT_CLOSED_IN_STMT_CNT_SUM
+--add cash advance variables
+FROM
+analysis_table AS A
+LEFT JOIN
+ACCOUNT_STATEMENTS AS B
+ON A.ACCOUNT_ID = B.ACCOUNT_ID
+AND A.STATEMENT_NUM <= B.STATEMENT_NUM
+LEFT JOIN
+(SELECT * FROM CLIP_RESULTS_DATA WHERE PRE_EVALUATION IS NULL OR PRE_EVALUATION = FALSE) AS C
+ON A.account_id = C.account_id
+AND A.STATEMENT_NUM = C.STATEMENT_NUMBER
+LEFT JOIN
+covid_util_adj D
+ON to_char(B.STATEMENT_END_DT,'YYYY-MM') = to_char(D.MONTH,'YYYY-MM')
+--------------------------- Y1 -----------------------------
+WHERE
+A.STATEMENT_NUM IN (7,18,26)
+--and eligibility_HC_Y1 = 1
+and TO_CHAR(account_open_dt,'YYYY') > 2016
+--AND RISKGROUP_DSERIES_Y1 IS NOT NULL
+and eligibility_hc > 0
+GROUP BY
+1,2,3,4,5,6
+order by 4,1,5,3
+;
+
+
+
+describe table ACCOUNT_STATEMENTS;
+
+select *
+from EDW_DB.PUBLIC.EVENT_EMAIL 
+where template_nm = 'clip_cfu_offer';
+
+
